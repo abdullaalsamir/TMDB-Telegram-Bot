@@ -2,8 +2,9 @@ import os
 import logging
 import re
 import requests
+import html
+import datetime
 from dotenv import load_dotenv
-
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -71,6 +72,20 @@ def get_english_backdrop(media_type: str, media_id: int, api_key: str):
         logger.error(f"Error fetching English backdrop for {media_type} {media_id}: {e}")
         return None
 
+def get_season_details(tv_id: int, season_num: int, api_key: str):
+    url = f"https://api.themoviedb.org/3/tv/{tv_id}/season/{season_num}"
+    params = {
+        "api_key": api_key,
+        "language": "en-US"
+    }
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logger.error(f"Error fetching details for TV ID {tv_id} Season {season_num}: {e}")
+        return None
+
 def get_tv_seasons_details(tv_id: int, api_key: str):
     url = f"https://api.themoviedb.org/3/tv/{tv_id}"
     params = {
@@ -83,20 +98,62 @@ def get_tv_seasons_details(tv_id: int, api_key: str):
         data = response.json()
         
         name = data.get("name")
-        seasons = data.get("seasons", [])
+        escaped_name = html.escape(name) if name else ""
         
+        seasons = data.get("seasons", [])
         valid_seasons = [s for s in seasons if s.get("season_number", 0) > 0]
         valid_seasons.sort(key=lambda x: x.get("season_number", 0))
         
+        today = datetime.date.today()
         season_lines = []
-        for s in valid_seasons:
+        
+        for idx, s in enumerate(valid_seasons):
             s_num = s.get("season_number")
             ep_count = s.get("episode_count", 0)
-            ep_word = "Episode" if ep_count == 1 else "Episodes"
-            season_lines.append(f"Season {s_num}: {ep_count} {ep_word}")
             
+            is_latest = (idx == len(valid_seasons) - 1)
+            expanded = False
+            episodes = []
+            
+            if is_latest:
+                season_details = get_season_details(tv_id, s_num, api_key)
+                if season_details:
+                    episodes = season_details.get("episodes", [])
+                    has_future = False
+                    for ep in episodes:
+                        air_date_str = ep.get("air_date")
+                        if not air_date_str:
+                            has_future = True
+                            break
+                        try:
+                            air_date = datetime.datetime.strptime(air_date_str, "%Y-%m-%d").date()
+                            if air_date >= today:
+                                has_future = True
+                                break
+                        except ValueError:
+                            pass
+                    if has_future:
+                        expanded = True
+            
+            if expanded:
+                for ep in episodes:
+                    ep_num = ep.get("episode_number")
+                    air_date_str = ep.get("air_date")
+                    formatted_date = "TBA"
+                    if air_date_str:
+                        try:
+                            dt = datetime.datetime.strptime(air_date_str, "%Y-%m-%d")
+                            formatted_date = dt.strftime("%d %B, %Y")
+                        except ValueError:
+                            pass
+                    season_lines.append(f"Season {s_num}: Episode {ep_num:02d}: <code>{formatted_date}</code>")
+            else:
+                ep_word = "Episode" if ep_count == 1 else "Episodes"
+                padded_count = f"{ep_count:02d}"
+                season_lines.append(f"Season {s_num}: {padded_count} {ep_word}")
+                
         seasons_text = "\n".join(season_lines)
-        return name, seasons_text
+        return escaped_name, seasons_text
     except Exception as e:
         logger.error(f"Error fetching TV details for TV ID {tv_id}: {e}")
         return None, None
@@ -152,18 +209,28 @@ def get_tmdb_media(query: str, api_key: str):
         
         if media_type == "movie":
             title = best_match.get("title")
+            escaped_title = html.escape(title) if title else ""
             release_date = best_match.get("release_date", "")
             year = release_date.split("-")[0] if release_date else ""
-            display_title = f"{title} ({year})" if year else title
+            display_title = f"{escaped_title} ({year})" if year else escaped_title
+            
+            if release_date:
+                try:
+                    dt = datetime.datetime.strptime(release_date, "%Y-%m-%d")
+                    formatted_date = dt.strftime("%d %B, %Y")
+                    display_title += f"\n\n<code>{formatted_date}</code>"
+                except ValueError:
+                    pass
         else:
             tv_name, seasons_text = get_tv_seasons_details(media_id, api_key)
             if tv_name and seasons_text:
                 display_title = f"{tv_name}\n\n{seasons_text}"
             else:
                 title = best_match.get("name")
+                escaped_title = html.escape(title) if title else ""
                 first_air_date = best_match.get("first_air_date", "")
                 year = first_air_date.split("-")[0] if first_air_date else ""
-                display_title = f"{title} ({year})" if year else title
+                display_title = f"{escaped_title} ({year})" if year else escaped_title
             
         return {
             "title": display_title,
@@ -191,7 +258,8 @@ async def channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(
             chat_id=message.chat_id,
             photo=media_info["image_url"],
-            caption=media_info["title"]
+            caption=media_info["title"],
+            parse_mode="HTML"
         )
         
         await message.delete()
