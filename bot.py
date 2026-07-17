@@ -143,7 +143,7 @@ def get_tv_seasons_details(tv_id: int, api_key: str):
                     if air_date_str:
                         try:
                             dt = datetime.datetime.strptime(air_date_str, "%Y-%m-%d")
-                            formatted_date = dt.strftime("%d %B, %Y")
+                            formatted_date = dt.strftime("%d %b, %Y")
                         except ValueError:
                             pass
                     season_lines.append(f"Season {s_num}: Episode {ep_num:02d}: <code>{formatted_date}</code>")
@@ -212,7 +212,7 @@ def get_tmdb_media(query: str, api_key: str):
             escaped_title = html.escape(title) if title else ""
             release_date = best_match.get("release_date", "")
             year = release_date.split("-")[0] if release_date else ""
-            display_title = f"{escaped_title} ({year})" if year else escaped_title
+            display_title = f"<b>{escaped_title} ({year})</b>" if year else f"<b>{escaped_title}</b>"
             
             if release_date:
                 try:
@@ -224,13 +224,13 @@ def get_tmdb_media(query: str, api_key: str):
         else:
             tv_name, seasons_text = get_tv_seasons_details(media_id, api_key)
             if tv_name and seasons_text:
-                display_title = f"{tv_name}\n\n{seasons_text}"
+                display_title = f"<b>{tv_name}</b>\n\n{seasons_text}"
             else:
                 title = best_match.get("name")
                 escaped_title = html.escape(title) if title else ""
                 first_air_date = best_match.get("first_air_date", "")
                 year = first_air_date.split("-")[0] if first_air_date else ""
-                display_title = f"{escaped_title} ({year})" if year else escaped_title
+                display_title = f"<b>{escaped_title} ({year})</b>" if year else f"<b>{escaped_title}</b>"
             
         return {
             "title": display_title,
